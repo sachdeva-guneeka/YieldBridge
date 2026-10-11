@@ -1,0 +1,1775 @@
+const { useState, useEffect, useRef, useMemo } = React;
+
+// Helper: Format numbers as Indian Rupees (INR)
+const formatINR = (val, compact = false) => {
+  if (isNaN(val)) return "₹0";
+  const num = Math.round(val);
+  
+  if (compact && num >= 10000000) {
+    return `₹${(num / 10000000).toFixed(2)} Cr`;
+  }
+  if (compact && num >= 100000) {
+    return `₹${(num / 100000).toFixed(2)} L`;
+  }
+  
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0
+  }).format(num);
+};
+
+// Helper: Calculate compound interest (Lump sum + SIP)
+const calculateGrowth = (principal, monthly, years, annualRate) => {
+  const r = annualRate / 100;
+  const t = years;
+  const n = t * 12;
+  const i = r / 12;
+
+  // Future value of Lumpsum
+  const fvLump = principal * Math.pow(1 + r, t);
+
+  // Future value of Monthly SIP
+  let fvSip = 0;
+  if (i > 0 && n > 0) {
+    fvSip = monthly * ((Math.pow(1 + i, n) - 1) / i) * (1 + i);
+  } else {
+    fvSip = monthly * n;
+  }
+
+  const totalPayout = fvLump + fvSip;
+  const totalInvested = principal + (monthly * n);
+  const interestEarned = totalPayout - totalInvested;
+
+  return {
+    totalPayout,
+    totalInvested,
+    interestEarned
+  };
+};
+
+// Categorized Indian Sovereign & Micro-SIP Schemes Database
+const SCHEME_CATEGORIES = [
+  { id: 'safe', label: '🛡️ Safe Household Savings', desc: 'Guaranteed deposits & government-backed term returns' },
+  { id: 'family', label: '👧 Special Family Goals', desc: 'High-yield schemes for daughters, retirees & tax-free wealth' },
+  { id: 'microsip', label: '🪙 Micro-SIPs (Financial Inclusion)', desc: 'Wealth creation starting at just ₹50/month' }
+];
+
+const SCHEMES_DATABASE = {
+  safe: [
+    {
+      id: 'bank',
+      name: 'Standard Bank Savings',
+      rate: 3.5,
+      tenure: 'No Lock-in (Liquid)',
+      taxTag: 'Taxed per Income Slab',
+      safety: 'RBI Insurance up to ₹5 Lakhs',
+      badge: 'Liquid Cash',
+      icon: '🏦',
+      desc: 'Traditional bank savings account providing basic interest with instant liquidity.',
+      minInvest: '₹0',
+      risk: 'Ultra Low',
+      rules: {
+        limits: 'Min ₹0 | No Maximum limit',
+        lockIn: '0 Days (100% Instant Liquidity anytime)',
+        taxStatus: 'Taxable per income slab. Interest up to ₹10,000 is exempt under Section 80TTA.',
+        earlyExit: 'Instant free withdrawal anytime without penalty.'
+      },
+      audioExplanation: {
+        en: "Standard Bank Savings account lets you keep money with instant withdrawal anytime. However, at only 3.5 percent interest, inflation reduces your real purchasing power over time.",
+        hi: "साधारण बैंक बचत खाता आपको कभी भी तुरंत पैसे निकालने की सुविधा देता है। हालांकि, केवल 3.5 प्रतिशत ब्याज पर, महंगाई आपके पैसे की असली ताकत कम कर देती है।"
+      },
+      documents: [
+        { id: 'aadhaar', name: 'Aadhaar Card', req: 'Identity & Address Proof', icon: '🪪' },
+        { id: 'pan', name: 'PAN Card', req: 'Tax Identification', icon: '💳' },
+        { id: 'photo', name: '2 Passport Photographs', req: 'Account Opening Form', icon: '📸' }
+      ]
+    },
+    {
+      id: 'potd',
+      name: 'Post Office Time Deposit (POTD)',
+      rate: 7.5,
+      rateRange: '7.0% - 7.5%',
+      tenure: '1 – 5 Yr Lock-in',
+      taxTag: '5-Yr POTD eligible for Sec 80C',
+      safety: '100% Sovereign Guarantee',
+      badge: 'Safe FD Alternative',
+      icon: '📮',
+      desc: 'Fixed rate term deposit backed by Govt of India via India Post with guaranteed quarterly compounding.',
+      minInvest: '₹1,000',
+      risk: 'Zero Risk (Govt Backed)',
+      rules: {
+        limits: 'Min ₹1,000 per deposit | No Maximum limit (Multiples of ₹100)',
+        lockIn: '1, 2, 3 or 5 Years lock-in period',
+        taxStatus: '5-Year POTD deposit qualifies for Section 80C tax deduction up to ₹1.5 Lakhs.',
+        earlyExit: 'Premature closure allowed after 6 months. If closed between 6-12 months, Post Office savings account rate applies.'
+      },
+      audioExplanation: {
+        en: "Post Office Time Deposit is a government fixed deposit offering up to 7.5 percent interest. The 5-year deposit also saves tax under Section 80C.",
+        hi: "पोस्ट ऑफिस टाइम डिपॉजिट एक सरकारी एफडी है जो 7.5 प्रतिशत तक ब्याज देती है। 5 साल की जमा पर धारा 80C के तहत टैक्स बचत भी मिलती है।"
+      },
+      documents: [
+        { id: 'aadhaar', name: 'Aadhaar Card', req: 'Address & Identity Proof', icon: '🪪' },
+        { id: 'pan', name: 'PAN Card', req: 'Tax Verification', icon: '💳' },
+        { id: 'photo', name: '2 Passport Photographs', req: 'Form 1 Submission', icon: '📸' }
+      ]
+    },
+    {
+      id: 'nsc',
+      name: 'National Savings Certificate (NSC)',
+      rate: 7.7,
+      tenure: '5 Yr Lock-in',
+      taxTag: 'Section 80C Exempt (Up to ₹1.5L)',
+      safety: '100% Sovereign Guarantee',
+      badge: '80C Tax Saver',
+      icon: '📜',
+      desc: 'Popular small savings certificate compounding interest annually. Deemed re-invested under Section 80C.',
+      minInvest: '₹1,000',
+      risk: 'Zero Risk (Govt Backed)',
+      rules: {
+        limits: 'Min ₹1,000 per deposit | No Maximum limit',
+        lockIn: '5 Years fixed lock-in period',
+        taxStatus: 'Section 80C deduction up to ₹1.5 Lakhs. Accrued annual interest is deemed re-invested under Section 80C.',
+        earlyExit: 'Premature withdrawal is strictly prohibited, except on death of account holder or court order.'
+      },
+      audioExplanation: {
+        en: "National Savings Certificate earns 7.7 percent interest over 5 years. It is 100 percent safe and offers full tax exemption under Section 80C.",
+        hi: "नेशनल सेविंग्स सर्टिफिकेट (NSC) 5 साल में 7.7 प्रतिशत ब्याज देता है। यह 100 प्रतिशत सुरक्षित है और धारा 80C में टैक्स छूट देता है।"
+      },
+      documents: [
+        { id: 'aadhaar', name: 'Aadhaar Card', req: 'Identity & Address Proof', icon: '🪪' },
+        { id: 'pan', name: 'PAN Card', req: 'Tax Identification', icon: '💳' },
+        { id: 'photo', name: '2 Passport Photographs', req: 'NSC Application Form A', icon: '📸' }
+      ]
+    },
+    {
+      id: 'kvp',
+      name: 'Kisan Vikas Patra (KVP)',
+      rate: 7.5,
+      tenure: 'Doubles in 115 Months (9.5 Yrs)',
+      taxTag: 'Taxable Interest upon Maturity',
+      safety: '100% Sovereign Guarantee',
+      badge: 'Money Doubler (9.5 Yrs)',
+      icon: '💰',
+      desc: 'Guaranteed double payout upon maturity. Ultra-safe long-term capital doubling scheme backed by India Post.',
+      minInvest: '₹1,000',
+      risk: 'Zero Risk (Govt Backed)',
+      rules: {
+        limits: 'Min ₹1,000 per deposit | No Maximum limit',
+        lockIn: 'Doubles money in 115 months (9.5 Years). Minimum lock-in of 2 years and 6 months (30 months).',
+        taxStatus: 'Interest is taxable on maturity according to income tax bracket. No TDS deducted.',
+        earlyExit: 'Allowed after 2.5 years (30 months) in specified blocks of 6 months with pre-fixed payout values.'
+      },
+      audioExplanation: {
+        en: "Kisan Vikas Patra doubles your invested money in exactly 115 months, backed by complete Government of India sovereign guarantee.",
+        hi: "किसान विकास पत्र (KVP) आपके निवेश किए गए पैसे को 115 महीनों (साढ़े 9 साल) में दोगुना कर देता है, जो पूरी तरह सरकारी गारंटी से सुरक्षित है।"
+      },
+      documents: [
+        { id: 'aadhaar', name: 'Aadhaar Card', req: 'Identity & Address Proof', icon: '🪪' },
+        { id: 'pan', name: 'PAN Card', req: 'Mandatory for investments > ₹50,000', icon: '💳' },
+        { id: 'photo', name: '2 Passport Photographs', req: 'KVP Form A', icon: '📸' }
+      ]
+    }
+  ],
+  family: [
+    {
+      id: 'ssy',
+      name: 'Sukanya Samriddhi Yojana (SSY)',
+      rate: 8.2,
+      tenure: '21 Years (or Marriage post 18)',
+      taxTag: '100% Tax-Free (EEE Category)',
+      safety: '100% Sovereign Guarantee',
+      badge: "Daughter's Future",
+      icon: '👧',
+      desc: 'Special high-yield government savings scheme for girl children under 10 years. Completely tax-free interest and maturity under EEE status.',
+      minInvest: '₹250 / year',
+      risk: 'Zero Risk (Govt Backed)',
+      rules: {
+        limits: 'Min ₹250 / financial year | Max ₹1,50,000 / financial year',
+        lockIn: '21 Years from account opening date (or until girl child marriage after age 18).',
+        taxStatus: '100% Tax-Free (Exempt-Exempt-Exempt / EEE status). Contribution eligible under Section 80C.',
+        earlyExit: 'Up to 50% withdrawal permitted after girl child reaches 18 years for higher education expenses.'
+      },
+      audioExplanation: {
+        en: "Sukanya Samriddhi Yojana offers a high 8.2 percent interest rate for girl children below 10 years. All interest and maturity amounts are 100 percent tax-free.",
+        hi: "सुकन्या समृद्धि योजना 10 वर्ष से कम उम्र की बेटियों के लिए 8.2 प्रतिशत की उच्च ब्याज दर देती है। इसका पूरा ब्याज और मैच्योरिटी पूरी तरह टैक्स फ्री है।"
+      },
+      documents: [
+        { id: 'birth_cert', name: "Child's Birth Certificate", req: 'Mandatory Proof of Age (<10 yrs)', icon: '📜' },
+        { id: 'aadhaar', name: 'Guardian Aadhaar Card', req: 'Parent/Guardian Identity Proof', icon: '🪪' },
+        { id: 'pan', name: 'Guardian PAN Card', req: 'Parent/Guardian Tax Identification', icon: '💳' },
+        { id: 'photo', name: '2 Photographs (Child & Parent)', req: 'Account Opening Form', icon: '📸' }
+      ]
+    },
+    {
+      id: 'scss',
+      name: 'Senior Citizen Savings Scheme (SCSS)',
+      rate: 8.2,
+      tenure: '5 Yrs (Extendable by 3 Yrs)',
+      taxTag: 'Section 80C Eligible | Quarterly Pension',
+      safety: '100% Sovereign Guarantee',
+      badge: 'Quarterly Pension',
+      icon: '👵',
+      desc: 'Dedicated high-interest quarterly payout pension scheme for retirees aged 60+ (or 55+ for voluntary retirees).',
+      minInvest: '₹1,000 (Max ₹30 Lakhs)',
+      risk: 'Zero Risk (Govt Backed)',
+      rules: {
+        limits: 'Min ₹1,000 | Max ₹30,000,00 (₹30 Lakhs total per senior citizen)',
+        lockIn: '5 Years lock-in (Extendable once for an additional 3-year block).',
+        taxStatus: 'Eligible for Section 80C tax deduction. Quarterly interest is taxable if total exceeds ₹50,000/yr.',
+        earlyExit: 'Premature exit allowed after 1 year with 1.5% penalty, and after 2 years with 1% penalty.'
+      },
+      audioExplanation: {
+        en: "Senior Citizen Savings Scheme provides guaranteed 8.2 percent interest paid out every quarter directly to retired senior citizens' bank accounts.",
+        hi: "सीनियर सिटीजन सेविंग्स स्कीम वरिष्ठ नागरिकों को हर 3 महीने में गारंटीड 8.2 प्रतिशत ब्याज सीधा उनके बैंक खाते में पेंशन की तरह देती है।"
+      },
+      documents: [
+        { id: 'age_proof', name: 'Senior Citizen Age Proof', req: 'Birth Certificate / Passport / Voter ID (60+ yrs)', icon: '👴' },
+        { id: 'vrs_proof', name: 'Retirement / VRS Order', req: 'Mandatory for 55-60 VRS retirees', icon: '📄' },
+        { id: 'aadhaar', name: 'Aadhaar Card', req: 'Identity & Address Proof', icon: '🪪' },
+        { id: 'pan', name: 'PAN Card', req: 'Tax Registration', icon: '💳' },
+        { id: 'photo', name: '2 Passport Photographs', req: 'SCSS Account Opening Form', icon: '📸' }
+      ]
+    },
+    {
+      id: 'ppf',
+      name: 'Public Provident Fund (PPF)',
+      rate: 7.1,
+      tenure: '15 Yr Horizon (Partial after 7 Yrs)',
+      taxTag: '100% Tax-Free (EEE Category)',
+      safety: '100% Sovereign Guarantee',
+      badge: 'Retirement Foundation',
+      icon: '🛡️',
+      desc: 'Long-term cornerstone retirement vehicle with guaranteed tax-free annual interest and Section 80C deduction.',
+      minInvest: '₹500 / year',
+      risk: 'Zero Risk (Govt Backed)',
+      rules: {
+        limits: 'Min ₹500 / financial year | Max ₹1,50,000 / financial year',
+        lockIn: '15 Financial Years lock-in (Extendable indefinitely in 5-year blocks).',
+        taxStatus: '100% Tax-Free (EEE Status). Principal deposit qualifies under Section 80C up to ₹1.5 Lakhs.',
+        earlyExit: 'Partial withdrawal up to 50% permitted starting from the 7th financial year. Loan facility available from 3rd year.'
+      },
+      audioExplanation: {
+        en: "Public Provident Fund is a 15-year government savings scheme earning 7.1 percent tax-free interest, making it ideal for building long-term wealth.",
+        hi: "पब्लिक प्रॉविडेंट फंड (PPF) 15 साल की सरकारी योजना है जिसमें 7.1 प्रतिशत टैक्स-फ्री ब्याज मिलता है, जो लंबे समय के लिए संपत्ति बनाने हेतु सर्वोत्तम है।"
+      },
+      documents: [
+        { id: 'aadhaar', name: 'Aadhaar Card', req: 'Identity & Address Proof', icon: '🪪' },
+        { id: 'pan', name: 'PAN Card', req: 'Tax Identification', icon: '💳' },
+        { id: 'photo', name: '2 Passport Photographs', req: 'PPF Form A', icon: '📸' }
+      ]
+    }
+  ],
+  microsip: [
+    {
+      id: 'microsip',
+      name: 'Index / Hybrid Micro-SIP',
+      rate: 11.0,
+      tenure: 'Flexible (No Lock-in)',
+      taxTag: 'Equity Tax Rates (12.5% > ₹1.25L)',
+      safety: 'Market Linked / Broad Index Diversified',
+      badge: 'Daily Worker Savings (₹50/mo)',
+      icon: '🪙',
+      desc: 'Empowering daily workers & micro-investors to build equity wealth starting from just ₹50/month into top Indian index & hybrid funds.',
+      minInvest: '₹50 / month',
+      risk: 'Moderate (Market-linked)',
+      rules: {
+        limits: 'Min ₹50 / month | No Maximum limit',
+        lockIn: 'Flexible (No lock-in period for open-ended index/hybrid funds).',
+        taxStatus: 'Equity Taxation — Long Term Capital Gains (LTCG) taxed at 12.5% for gains exceeding ₹1.25 Lakhs per year.',
+        earlyExit: 'Redeem anytime with zero exit penalty after 1 year. Money credited to bank account in T+2 days.'
+      },
+      audioExplanation: {
+        en: "Micro-SIP allows daily wage earners and small savers to start investing in India's growth from just 50 rupees per month with complete flexibility.",
+        hi: "माइक्रो-एसआईपी (Micro-SIP) दिहाड़ी मजदूरों और छोटे बचतकर्ताओं को हर महीने केवल 50 रुपये से भारत के विकास में निवेश करने की पूरी सुविधा देता है।"
+      },
+      documents: [
+        { id: 'aadhaar', name: 'Aadhaar Card', req: 'Paperless Instant e-KYC', icon: '🪪' },
+        { id: 'pan', name: 'PAN Card', req: 'Mutual Fund KYC Verification', icon: '💳' },
+        { id: 'bank_mandate', name: 'UPI VPA / Bank Mandate', req: 'Auto-debit ₹50 monthly savings', icon: '📱' }
+      ]
+    }
+  ]
+};
+
+function YieldBridgeApp() {
+  // Input Control States
+  const [initialSavings, setInitialSavings] = useState(200000);
+  const [monthlyContribution, setMonthlyContribution] = useState(5000);
+  const [timeHorizon, setTimeHorizon] = useState(5);
+  const [bankRate, setBankRate] = useState(3.5);
+  const [sovereignRate, setSovereignRate] = useState(7.7);
+  const [inflationRate, setInflationRate] = useState(5.5);
+  const [adjustInflation, setAdjustInflation] = useState(false);
+
+  // Compact Sidebar Profile Toggles
+  const [isGirlChild, setIsGirlChild] = useState(false);
+  const [isSeniorCitizen, setIsSeniorCitizen] = useState(false);
+
+  // Scheme Matrix Tab State
+  const [schemeMatrixTab, setSchemeMatrixTab] = useState('safe'); // 'safe' | 'family' | 'microsip'
+
+  // UI Navigation & Modal States
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'schemes' | 'table'
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showWizardModal, setShowWizardModal] = useState(false);
+  
+  // Onboarding, Rules & Audio Modal States
+  const [selectedSchemeDoc, setSelectedSchemeDoc] = useState(null);
+  const [selectedSchemeRules, setSelectedSchemeRules] = useState(null);
+  const [checkedDocs, setCheckedDocs] = useState({});
+  const [audioModalScheme, setAudioModalScheme] = useState(null);
+  const [audioLang, setAudioLang] = useState('hi'); // 'hi' | 'en'
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+
+  // Wizard Questions State
+  const [wizardAnswers, setWizardAnswers] = useState({
+    lockIn: 'flexible',
+    taxBracket: '30',
+    goal: 'wealth'
+  });
+
+  const chartRef = useRef(null);
+  const chartInstance = useRef(null);
+
+  // Automatically switch tab if profile toggle is activated
+  useEffect(() => {
+    if (isGirlChild || isSeniorCitizen) {
+      setSchemeMatrixTab('family');
+    }
+  }, [isGirlChild, isSeniorCitizen]);
+
+  // Core Math Calculations
+  const bankResult = useMemo(() => {
+    return calculateGrowth(initialSavings, monthlyContribution, timeHorizon, bankRate);
+  }, [initialSavings, monthlyContribution, timeHorizon, bankRate]);
+
+  const sovereignResult = useMemo(() => {
+    return calculateGrowth(initialSavings, monthlyContribution, timeHorizon, sovereignRate);
+  }, [initialSavings, monthlyContribution, timeHorizon, sovereignRate]);
+
+  // Inaction Tax (exact lost potential money)
+  const inactionTax = Math.max(0, sovereignResult.totalPayout - bankResult.totalPayout);
+  const inactionTaxPercentage = bankResult.totalPayout > 0 ? ((inactionTax / bankResult.totalPayout) * 100).toFixed(1) : 0;
+
+  // Real purchasing power calculation (post inflation)
+  const inflationFactor = Math.pow(1 + inflationRate / 100, timeHorizon);
+  const realBankPayout = adjustInflation ? bankResult.totalPayout / inflationFactor : bankResult.totalPayout;
+  const realSovereignPayout = adjustInflation ? sovereignResult.totalPayout / inflationFactor : sovereignResult.totalPayout;
+  const realInactionTax = adjustInflation ? inactionTax / inflationFactor : inactionTax;
+
+  // Find Highest Yielding Scheme in Current Tab
+  const currentTabSchemes = SCHEMES_DATABASE[schemeMatrixTab];
+  const bestYieldScheme = useMemo(() => {
+    let best = currentTabSchemes[0];
+    let maxVal = 0;
+    currentTabSchemes.forEach(s => {
+      const g = calculateGrowth(initialSavings, monthlyContribution, timeHorizon, s.rate);
+      if (g.totalPayout > maxVal) {
+        maxVal = g.totalPayout;
+        best = s;
+      }
+    });
+    return { scheme: best, payout: maxVal };
+  }, [schemeMatrixTab, initialSavings, monthlyContribution, timeHorizon]);
+
+  // Dynamic Smart Recommendation Banner Text & Targeted Scheme ID
+  const recommendationInfo = useMemo(() => {
+    if (isGirlChild) {
+      return {
+        text: "✨ Recommended for You: Sukanya Samriddhi Yojana (SSY) gives the highest yield (8.2%) for your profile.",
+        targetId: 'ssy'
+      };
+    }
+    if (isSeniorCitizen) {
+      return {
+        text: "✨ Recommended for You: Senior Citizen Savings Scheme (SCSS) offers guaranteed quarterly payout (8.2%).",
+        targetId: 'scss'
+      };
+    }
+    return {
+      text: `✨ Recommended for You: ${bestYieldScheme.scheme.name} offers the highest projected payout of ${formatINR(bestYieldScheme.payout)} over ${timeHorizon} years.`,
+      targetId: bestYieldScheme.scheme.id
+    };
+  }, [isGirlChild, isSeniorCitizen, bestYieldScheme, timeHorizon]);
+
+  // Year-by-Year Growth Trajectory Data
+  const yearlyData = useMemo(() => {
+    const list = [];
+    for (let yr = 1; yr <= timeHorizon; yr++) {
+      const bRes = calculateGrowth(initialSavings, monthlyContribution, yr, bankRate);
+      const sRes = calculateGrowth(initialSavings, monthlyContribution, yr, sovereignRate);
+      const mRes = calculateGrowth(initialSavings, monthlyContribution, yr, 11.0);
+      const totalInv = initialSavings + (monthlyContribution * 12 * yr);
+      
+      list.push({
+        year: yr,
+        invested: totalInv,
+        bankPayout: bRes.totalPayout,
+        sovereignPayout: sRes.totalPayout,
+        mfPayout: mRes.totalPayout,
+        taxLoss: sRes.totalPayout - bRes.totalPayout
+      });
+    }
+    return list;
+  }, [initialSavings, monthlyContribution, timeHorizon, bankRate, sovereignRate]);
+
+  // Update Chart.js Instance
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const ctx = chartRef.current.getContext('2d');
+
+    if (chartInstance.current) {
+      chartInstance.current.destroy();
+    }
+
+    const labels = yearlyData.map(d => `Year ${d.year}`);
+    const bankPoints = yearlyData.map(d => Math.round(d.bankPayout));
+    const sovPoints = yearlyData.map(d => Math.round(d.sovereignPayout));
+    const mfPoints = yearlyData.map(d => Math.round(d.mfPayout));
+
+    chartInstance.current = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'Optimized Sovereign (~7.7%)',
+            data: sovPoints,
+            borderColor: '#059669',
+            backgroundColor: 'rgba(5, 150, 105, 0.08)',
+            borderWidth: 3,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 4,
+            pointBackgroundColor: '#059669'
+          },
+          {
+            label: 'Micro-SIP Index (~11.0%)',
+            data: mfPoints,
+            borderColor: '#8b5cf6',
+            borderDash: [4, 4],
+            borderWidth: 2,
+            fill: false,
+            tension: 0.3,
+            pointRadius: 3,
+            pointBackgroundColor: '#8b5cf6'
+          },
+          {
+            label: `Standard Savings (${bankRate}%)`,
+            data: bankPoints,
+            borderColor: '#94a3b8',
+            backgroundColor: 'rgba(148, 163, 184, 0.05)',
+            borderWidth: 2,
+            fill: false,
+            tension: 0.3,
+            pointRadius: 3,
+            pointBackgroundColor: '#94a3b8'
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: {
+              usePointStyle: true,
+              font: { family: 'Inter', size: 12, weight: '600' }
+            }
+          },
+          tooltip: {
+            backgroundColor: '#0f172a',
+            titleFont: { family: 'Plus Jakarta Sans', size: 13, weight: 'bold' },
+            bodyFont: { family: 'Inter', size: 12 },
+            padding: 12,
+            callbacks: {
+              label: function(context) {
+                return `${context.dataset.label}: ${formatINR(context.raw)}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid: { display: false }
+          },
+          y: {
+            ticks: {
+              callback: function(val) {
+                if (val >= 10000000) return '₹' + (val / 10000000).toFixed(1) + 'Cr';
+                if (val >= 100000) return '₹' + (val / 100000).toFixed(0) + 'L';
+                if (val >= 1000) return '₹' + (val / 1000).toFixed(0) + 'k';
+                return '₹' + val;
+              }
+            }
+          }
+        }
+      }
+    });
+
+    return () => {
+      if (chartInstance.current) {
+        chartInstance.current.destroy();
+      }
+    };
+  }, [yearlyData, bankRate, activeTab]);
+
+  // Audio Speech Synthesis Handler
+  const speakAudio = (text, lang) => {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = lang === 'hi' ? 'hi-IN' : 'en-IN';
+    utterance.rate = 0.95;
+
+    utterance.onstart = () => setIsPlayingAudio(true);
+    utterance.onend = () => setIsPlayingAudio(false);
+    utterance.onerror = () => setIsPlayingAudio(false);
+
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleOpenAudioModal = (scheme) => {
+    setAudioModalScheme(scheme);
+    setIsPlayingAudio(true);
+    speakAudio(scheme.audioExplanation[audioLang], audioLang);
+  };
+
+  const handleToggleAudioLang = (lang) => {
+    setAudioLang(lang);
+    if (audioModalScheme) {
+      speakAudio(audioModalScheme.audioExplanation[lang], lang);
+    }
+  };
+
+  const handleCloseAudioModal = () => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsPlayingAudio(false);
+    setAudioModalScheme(null);
+  };
+
+  const handleOpenDocModal = (scheme) => {
+    setSelectedSchemeDoc(scheme);
+    const initialChecks = {};
+    scheme.documents.forEach(doc => {
+      initialChecks[doc.id] = false;
+    });
+    setCheckedDocs(initialChecks);
+  };
+
+  const toggleDocCheck = (docId) => {
+    setCheckedDocs(prev => ({
+      ...prev,
+      [docId]: !prev[docId]
+    }));
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 pb-16">
+      
+      {/* TOP HEADER */}
+      <header className="bg-slate-900 text-white sticky top-0 z-40 border-b border-slate-800 shadow-md">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-emerald-400 flex items-center justify-center shadow-lg shadow-emerald-900/40">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <span className="font-heading font-extrabold text-2xl tracking-tight text-white">Yield Bridge</span>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  Sovereign & Safe Yield Navigator
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 hidden sm:block">Indian Post Office & Sovereign Scheme Yield Optimizer</p>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            <button 
+              onClick={() => setShowWizardModal(true)}
+              className="hidden md:inline-flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 text-xs font-medium px-3.5 py-2 rounded-lg transition"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+              <span>Smart Recommendation</span>
+            </button>
+
+            <button 
+              onClick={() => setShowExportModal(true)}
+              className="inline-flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-md shadow-emerald-900/30"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span>Export Report</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* HERO BANNER SECTION */}
+      <section className="bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-white pt-10 pb-16 px-4 sm:px-6 lg:px-8 border-b border-slate-800">
+        <div className="max-w-7xl mx-auto text-center">
+          <div className="inline-flex items-center space-x-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold px-3 py-1 rounded-full mb-4">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+            <span>Micro-SIPs Enabled: Start with as low as ₹50/month</span>
+          </div>
+
+          <h1 className="font-heading font-extrabold text-3xl sm:text-5xl lg:text-6xl tracking-tight text-white max-w-4xl mx-auto leading-tight">
+            Stop Losing Idle Money to Inflation
+          </h1>
+          
+          <p className="mt-4 text-base sm:text-lg text-slate-300 max-w-3xl mx-auto font-normal">
+            Compare safe Indian sovereign schemes <span className="text-emerald-400 font-semibold">(POTD, NSC, KVP, SSY, SCSS)</span> against Standard Savings and Micro-SIPs.
+          </p>
+
+          {/* Quick Metrics Header Pill */}
+          <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-3 max-w-4xl mx-auto">
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-3 text-center">
+              <span className="text-xs text-slate-400 block">Bank Savings Avg</span>
+              <span className="text-lg font-bold text-slate-200">3.50% p.a.</span>
+            </div>
+            <div className="bg-emerald-950/60 border border-emerald-700/50 rounded-xl p-3 text-center">
+              <span className="text-xs text-emerald-400 block">Sovereign & Family Schemes</span>
+              <span className="text-lg font-bold text-emerald-300">7.10% - 8.20%</span>
+            </div>
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-3 text-center">
+              <span className="text-xs text-slate-400 block">Micro-SIP Minimum</span>
+              <span className="text-lg font-bold text-violet-400">Just ₹50 / mo</span>
+            </div>
+            <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-3 text-center">
+              <span className="text-xs text-slate-400 block">Tax Exemption (EEE)</span>
+              <span className="text-lg font-bold text-amber-400">100% Tax Free</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* MAIN TWO-COLUMN DASHBOARD */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-8">
+        
+        {/* Navigation Tabs */}
+        <div className="flex space-x-2 border-b border-slate-200 mb-6 bg-white p-1.5 rounded-xl shadow-sm border">
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`flex-1 py-2.5 px-4 text-xs sm:text-sm font-semibold rounded-lg transition ${
+              activeTab === 'overview'
+                ? 'bg-emerald-600 text-white shadow-md'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            Yield Calculator & Visualizer
+          </button>
+          <button
+            onClick={() => setActiveTab('schemes')}
+            className={`flex-1 py-2.5 px-4 text-xs sm:text-sm font-semibold rounded-lg transition ${
+              activeTab === 'schemes'
+                ? 'bg-emerald-600 text-white shadow-md'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            Schemes Matrix & Onboarding
+          </button>
+          <button
+            onClick={() => setActiveTab('table')}
+            className={`flex-1 py-2.5 px-4 text-xs sm:text-sm font-semibold rounded-lg transition ${
+              activeTab === 'table'
+                ? 'bg-emerald-600 text-white shadow-md'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            Year-by-Year Wealth Table
+          </button>
+        </div>
+
+        {activeTab === 'overview' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            
+            {/* LEFT COLUMN: INTERACTIVE INPUT CONTROLS */}
+            <div className="lg:col-span-5 bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 space-y-6">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <h2 className="font-heading font-bold text-lg text-slate-900 flex items-center space-x-2">
+                  <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                  </svg>
+                  <span>Investment Parameters</span>
+                </h2>
+                <button 
+                  onClick={() => {
+                    setInitialSavings(200000);
+                    setMonthlyContribution(5000);
+                    setTimeHorizon(5);
+                    setBankRate(3.5);
+                    setIsGirlChild(false);
+                    setIsSeniorCitizen(false);
+                  }}
+                  className="text-xs text-slate-500 hover:text-emerald-600 font-medium underline"
+                >
+                  Reset Defaults
+                </button>
+              </div>
+
+              {/* 1. Initial Savings Amount (₹) */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Initial Savings Amount (₹)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-semibold">₹</span>
+                    <input
+                      type="number"
+                      value={initialSavings}
+                      onChange={(e) => setInitialSavings(Math.max(0, Number(e.target.value)))}
+                      className="w-36 pl-7 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-right font-bold text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="10000"
+                  max="10000000"
+                  step="10000"
+                  value={initialSavings}
+                  onChange={(e) => setInitialSavings(Number(e.target.value))}
+                />
+                
+                {/* Preset Chips */}
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {[50000, 100000, 200000, 500000, 1000000, 2500000, 5000000].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => setInitialSavings(val)}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-md border transition ${
+                        initialSavings === val
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-700 font-semibold'
+                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {formatINR(val, true)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2. Monthly Investment Contribution (₹) */}
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                      Monthly Contribution (₹)
+                    </label>
+                    <span className="text-[11px] text-emerald-600 font-semibold">Min: ₹50 / mo (Micro-SIP ready)</span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-semibold">₹</span>
+                    <input
+                      type="number"
+                      min="50"
+                      max="100000"
+                      value={monthlyContribution}
+                      onChange={(e) => setMonthlyContribution(Math.max(50, Number(e.target.value)))}
+                      className="w-36 pl-7 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-right font-bold text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <input
+                  type="range"
+                  min="50"
+                  max="100000"
+                  step="50"
+                  value={monthlyContribution}
+                  onChange={(e) => setMonthlyContribution(Number(e.target.value))}
+                />
+                
+                {/* Micro-SIP 3 Quick-Pills & Standard Presets */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-[10px] uppercase font-bold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded border border-violet-200">Micro-SIP:</span>
+                    {[50, 100, 500].map((val) => (
+                      <button
+                        key={val}
+                        onClick={() => setMonthlyContribution(val)}
+                        className={`flex-1 py-1 text-xs font-bold rounded-md border transition ${
+                          monthlyContribution === val
+                            ? 'bg-violet-600 border-violet-600 text-white shadow-sm ring-2 ring-violet-400/40'
+                            : 'bg-violet-50/80 border-violet-200 text-violet-800 hover:bg-violet-100'
+                        }`}
+                      >
+                        ₹{val}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {[1000, 2500, 5000, 10000, 25000, 50000].map((val) => (
+                      <button
+                        key={val}
+                        onClick={() => setMonthlyContribution(val)}
+                        className={`px-2.5 py-1 text-xs font-medium rounded-md border transition ${
+                          monthlyContribution === val
+                            ? 'bg-emerald-50 border-emerald-500 text-emerald-700 font-semibold'
+                            : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {formatINR(val, true)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* COMPACT SIDEBAR PROFILE TOGGLES [NEW FEATURE] */}
+              <div className="pt-2 border-t border-slate-100 space-y-2">
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                  Investor Profile Tags (Smart Recommendation)
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <label className={`inline-flex items-center space-x-2 px-3 py-1.5 rounded-xl border text-xs font-bold cursor-pointer transition ${
+                    isGirlChild 
+                      ? 'bg-emerald-50 border-emerald-500 text-emerald-900 ring-2 ring-emerald-500/20' 
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                  }`}>
+                    <input
+                      type="checkbox"
+                      checked={isGirlChild}
+                      onChange={(e) => {
+                        setIsGirlChild(e.target.checked);
+                        if (e.target.checked) setIsSeniorCitizen(false);
+                      }}
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span>👧 Girl Child (&lt;10 yrs)</span>
+                  </label>
+
+                  <label className={`inline-flex items-center space-x-2 px-3 py-1.5 rounded-xl border text-xs font-bold cursor-pointer transition ${
+                    isSeniorCitizen 
+                      ? 'bg-emerald-50 border-emerald-500 text-emerald-900 ring-2 ring-emerald-500/20' 
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                  }`}>
+                    <input
+                      type="checkbox"
+                      checked={isSeniorCitizen}
+                      onChange={(e) => {
+                        setIsSeniorCitizen(e.target.checked);
+                        if (e.target.checked) setIsGirlChild(false);
+                      }}
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span>👵 Senior Citizen (60+)</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* 3. Time Horizon (Years) */}
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Time Horizon (Years)
+                  </label>
+                  <span className="text-sm font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-0.5 rounded-full">
+                    {timeHorizon} {timeHorizon === 1 ? 'Year' : 'Years'}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="15"
+                  step="1"
+                  value={timeHorizon}
+                  onChange={(e) => setTimeHorizon(Number(e.target.value))}
+                />
+
+                {/* Horizon Quick Selector Pills */}
+                <div className="flex justify-between gap-1 pt-1">
+                  {[1, 3, 5, 7, 10, 15].map((yr) => (
+                    <button
+                      key={yr}
+                      onClick={() => setTimeHorizon(yr)}
+                      className={`flex-1 py-1 text-xs font-semibold rounded-md border transition ${
+                        timeHorizon === yr
+                          ? 'bg-emerald-600 border-emerald-600 text-white'
+                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {yr}Y
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 4. Standard Bank Savings Rate (%) */}
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Standard Bank Rate (%)
+                  </label>
+                  <div className="flex items-center space-x-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="1"
+                      max="6"
+                      value={bankRate}
+                      onChange={(e) => setBankRate(Number(e.target.value))}
+                      className="w-20 pr-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-right font-bold text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <span className="text-xs font-semibold text-slate-500">%</span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="1.0"
+                  max="6.0"
+                  step="0.1"
+                  value={bankRate}
+                  onChange={(e) => setBankRate(Number(e.target.value))}
+                />
+              </div>
+
+              {/* Inflation Adjustment Guard */}
+              <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-amber-900 block">Inflation Guard</span>
+                  <span className="text-xs text-amber-700">Adjust payout values at {inflationRate}% inflation</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={adjustInflation}
+                    onChange={(e) => setAdjustInflation(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
+                </label>
+              </div>
+
+            </div>
+
+            {/* RIGHT COLUMN: SUMMARY STAT CARDS & REAL-TIME VISUALIZATION */}
+            <div className="lg:col-span-7 space-y-6">
+              
+              {/* THREE MAIN SUMMARY METRIC CARDS */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                
+                {/* 1. Standard Savings Card */}
+                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden group hover:border-slate-300 transition">
+                  <div className="flex items-center justify-between text-slate-500 mb-2">
+                    <span className="text-xs font-bold uppercase tracking-wider">Standard Savings</span>
+                    <span className="text-xs font-semibold px-2 py-0.5 bg-slate-100 rounded text-slate-600">
+                      {bankRate}% p.a.
+                    </span>
+                  </div>
+                  <div className="text-2xl font-extrabold text-slate-900 font-heading">
+                    {formatINR(realBankPayout)}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500 flex items-center justify-between pt-2 border-t border-slate-100">
+                    <span>Total Invested:</span>
+                    <span className="font-semibold text-slate-700">{formatINR(bankResult.totalInvested)}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500 flex items-center justify-between">
+                    <span>Interest Earned:</span>
+                    <span className="font-semibold text-slate-700">+{formatINR(bankResult.interestEarned)}</span>
+                  </div>
+                </div>
+
+                {/* 2. Optimized Sovereign Payout Card */}
+                <div className="bg-emerald-900 text-white rounded-2xl p-5 border border-emerald-800 shadow-md relative overflow-hidden group glow-emerald">
+                  <div className="flex items-center justify-between text-emerald-300 mb-2">
+                    <span className="text-xs font-bold uppercase tracking-wider">Sovereign Payout</span>
+                    <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-800 text-emerald-200 rounded border border-emerald-700">
+                      ~7.7% avg
+                    </span>
+                  </div>
+                  <div className="text-2xl font-extrabold text-white font-heading">
+                    {formatINR(realSovereignPayout)}
+                  </div>
+                  <div className="mt-2 text-xs text-emerald-200 flex items-center justify-between pt-2 border-t border-emerald-800/80">
+                    <span>Total Invested:</span>
+                    <span className="font-semibold text-emerald-100">{formatINR(sovereignResult.totalInvested)}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-emerald-200 flex items-center justify-between">
+                    <span>Interest Earned:</span>
+                    <span className="font-bold text-emerald-400">+{formatINR(sovereignResult.interestEarned)}</span>
+                  </div>
+                </div>
+
+                {/* 3. The Inaction Tax Card (RED TEXT ALERT) */}
+                <div className="bg-red-50/90 rounded-2xl p-5 border-2 border-red-200 shadow-sm relative overflow-hidden tax-pulse">
+                  <div className="flex items-center justify-between text-red-700 mb-2">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-red-600 flex items-center space-x-1">
+                      <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <span>The Inaction Tax</span>
+                    </span>
+                    <span className="text-xs font-bold px-2 py-0.5 bg-red-100 text-red-700 rounded-full">
+                      Lost Yield
+                    </span>
+                  </div>
+                  <div className="text-2xl font-black text-red-600 font-heading">
+                    -{formatINR(realInactionTax)}
+                  </div>
+                  <p className="mt-2 text-xs text-red-700 font-medium leading-relaxed">
+                    Money lost by keeping funds in a standard {bankRate}% bank account instead of optimizing.
+                  </p>
+                  <div className="mt-2 inline-flex items-center space-x-1 text-xs font-bold text-red-800 bg-red-100/80 px-2 py-1 rounded">
+                    <span>+{inactionTaxPercentage}% potential upside missed</span>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* DYNAMIC CHART CARD */}
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 mb-4 gap-2">
+                  <div>
+                    <h3 className="font-heading font-bold text-lg text-slate-900">
+                      Wealth Trajectory Comparison ({timeHorizon} Years)
+                    </h3>
+                    <p className="text-xs text-slate-500">Visualizing corpus growth across risk-free schemes & micro-SIPs</p>
+                  </div>
+                  <div className="flex items-center space-x-2 text-xs text-slate-600 bg-slate-100 px-3 py-1.5 rounded-lg">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
+                    <span className="font-semibold">Sovereign Extra: +{formatINR(inactionTax)}</span>
+                  </div>
+                </div>
+
+                <div className="h-72 w-full relative">
+                  <canvas ref={chartRef}></canvas>
+                </div>
+              </div>
+
+              {/* QUICK REASONING / CALLOUT BANNER */}
+              <div className="bg-gradient-to-r from-emerald-900 to-slate-900 text-white rounded-2xl p-6 shadow-md border border-emerald-800 flex flex-col md:flex-row items-center justify-between gap-4">
+                <div>
+                  <span className="text-emerald-400 text-xs font-bold uppercase tracking-wider">Financial Inclusion & Family Goals</span>
+                  <h4 className="font-heading font-bold text-xl text-white mt-1">
+                    Explore SSY, SCSS & KVP Schemes
+                  </h4>
+                  <p className="text-slate-300 text-xs mt-1 max-w-xl">
+                    Get up to 8.2% 100% tax-free returns for daughter's future, quarterly senior pension, or double money in KVP.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('schemes')}
+                  className="whitespace-nowrap bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs px-5 py-3 rounded-xl transition shadow-lg shadow-emerald-500/20"
+                >
+                  Explore Schemes Matrix →
+                </button>
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* TAB 2: CLEAN 3-TAB SCHEME MATRIX & VISUAL ONBOARDING */}
+        {activeTab === 'schemes' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+              <div className="max-w-3xl mb-4">
+                <h2 className="font-heading font-bold text-2xl text-slate-900">
+                  Government & Micro-Investment Schemes Matrix
+                </h2>
+                <p className="text-sm text-slate-600 mt-1">
+                  Compare safe Indian schemes with visual goal badges, audio voice guides, and scheme rules modals.
+                </p>
+              </div>
+
+              {/* 1. DYNAMIC SMART RECOMMENDATION BANNER [NEW FEATURE] */}
+              <div className="mb-5 bg-gradient-to-r from-emerald-950 via-emerald-900 to-slate-900 text-white p-3.5 rounded-xl border border-emerald-700/60 shadow-xs flex items-center justify-between">
+                <div className="flex items-center space-x-2.5 text-xs font-semibold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+                  <span className="text-emerald-200">{recommendationInfo.text}</span>
+                </div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-900/80 px-2 py-0.5 rounded border border-emerald-700 shrink-0">
+                  AI Recommendation
+                </span>
+              </div>
+
+              {/* CLEAN 3-TAB MATRIX SUB-HEADER */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+                {SCHEME_CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setSchemeMatrixTab(cat.id)}
+                    className={`py-3 px-4 rounded-lg text-xs font-bold text-left transition flex flex-col justify-between ${
+                      schemeMatrixTab === cat.id
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/80 ring-2 ring-emerald-500/20'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="font-heading text-sm mb-1">{cat.label}</span>
+                    <span className="text-[11px] font-normal text-slate-500">{cat.desc}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* SCHEMES CARDS GRID WITH GOAL ICONS, AUDIO GUIDE, RULES MODAL & ONBOARDING */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {SCHEMES_DATABASE[schemeMatrixTab].map((scheme) => {
+                  const schemeGrowth = calculateGrowth(initialSavings, monthlyContribution, timeHorizon, scheme.rate);
+                  const schemeExtra = schemeGrowth.totalPayout - bankResult.totalPayout;
+                  const isRecommended = recommendationInfo.targetId === scheme.id;
+
+                  return (
+                    <div 
+                      key={scheme.id}
+                      className={`bg-slate-50 border rounded-2xl p-5 hover:border-emerald-500 hover:shadow-md transition flex flex-col justify-between relative ${
+                        isRecommended 
+                          ? 'border-2 border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/30' 
+                          : 'border-slate-200'
+                      }`}
+                    >
+                      {isRecommended && (
+                        <div className="absolute -top-3 right-4 bg-emerald-600 text-white text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full shadow-sm">
+                          ✨ Best Match
+                        </div>
+                      )}
+
+                      <div>
+                        {/* Header Badges & Goal Icon */}
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-2xl p-1 bg-white rounded-lg border border-slate-200 shadow-xs">
+                              {scheme.icon}
+                            </span>
+                            <span className="text-xs font-extrabold px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-md">
+                              {scheme.rateRange || `${scheme.rate}% p.a.`}
+                            </span>
+                          </div>
+                          <span className="text-[11px] font-bold text-slate-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                            {scheme.badge}
+                          </span>
+                        </div>
+
+                        {/* Scheme Title & Rules Button */}
+                        <div className="flex justify-between items-center mt-3">
+                          <h3 className="font-heading font-bold text-base text-slate-900">
+                            {scheme.name}
+                          </h3>
+                          
+                          {/* ℹ️ SCHEME RULES MODAL BUTTON [NEW FEATURE] */}
+                          <button
+                            onClick={() => setSelectedSchemeRules(scheme)}
+                            className="text-[11px] font-semibold text-slate-600 hover:text-emerald-700 bg-white hover:bg-slate-100 px-2 py-1 rounded-md border border-slate-200 flex items-center space-x-1 transition"
+                            title="View Scheme Deposit Rules & Lock-in Policy"
+                          >
+                            <span>ℹ️ Rules</span>
+                          </button>
+                        </div>
+
+                        <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                          {scheme.desc}
+                        </p>
+
+                        {/* Key Attributes */}
+                        <div className="mt-4 space-y-2 pt-3 border-t border-slate-200 text-xs">
+                          <div className="flex justify-between text-slate-600">
+                            <span>Tenure / Horizon:</span>
+                            <span className="font-semibold text-slate-800 text-right">{scheme.tenure}</span>
+                          </div>
+                          <div className="flex justify-between text-slate-600">
+                            <span>Tax Status:</span>
+                            <span className="font-semibold text-slate-800 text-right">{scheme.taxTag}</span>
+                          </div>
+                          <div className="flex justify-between text-slate-600">
+                            <span>Safety Level:</span>
+                            <span className="font-semibold text-emerald-700">{scheme.safety}</span>
+                          </div>
+                          <div className="flex justify-between text-slate-600">
+                            <span>Minimum Entry:</span>
+                            <span className="font-semibold text-slate-800">{scheme.minInvest}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 pt-3 border-t border-slate-200 space-y-3">
+                        
+                        {/* Projection Banner */}
+                        <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200">
+                          <div>
+                            <span className="text-[11px] text-slate-500 block">Projected ({timeHorizon}Y)</span>
+                            <span className="text-base font-extrabold text-slate-900">{formatINR(schemeGrowth.totalPayout)}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-xs text-emerald-600 font-bold block">+{formatINR(schemeExtra)}</span>
+                            <span className="text-[10px] text-slate-400">vs Bank Savings</span>
+                          </div>
+                        </div>
+
+                        {/* Action Buttons: Audio Guide & Photo Document Checklist */}
+                        <div className="grid grid-cols-2 gap-2">
+                          
+                          {/* 🔊 AUDIO GUIDE BUTTON */}
+                          <button
+                            onClick={() => handleOpenAudioModal(scheme)}
+                            className="py-2 px-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl transition flex items-center justify-center space-x-1 shadow-xs"
+                          >
+                            <span>🔊 Listen Guide</span>
+                          </button>
+
+                          {/* 🪪 DOCUMENT CHECKLIST BUTTON */}
+                          <button
+                            onClick={() => handleOpenDocModal(scheme)}
+                            className="py-2 px-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition flex items-center justify-center space-x-1 shadow-xs"
+                          >
+                            <span>🪪 Photo Checklist</span>
+                          </button>
+
+                        </div>
+
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: YEAR-BY-YEAR WEALTH TABLE */}
+        {activeTab === 'table' && (
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+              <div>
+                <h2 className="font-heading font-bold text-xl text-slate-900">
+                  Year-by-Year Accumulation Schedule
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Detailed timeline of total principal invested vs returns earned
+                </p>
+              </div>
+              <div className="text-xs text-slate-600 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                <span className="font-bold text-emerald-800">5-Year Inaction Tax: </span>
+                <span className="font-extrabold text-red-600">{formatINR(inactionTax)}</span>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-900 text-white font-heading text-xs uppercase tracking-wider">
+                  <tr>
+                    <th className="py-3 px-4">Timeline</th>
+                    <th className="py-3 px-4">Principal Deposited</th>
+                    <th className="py-3 px-4">Standard Bank (3.5%)</th>
+                    <th className="py-3 px-4">Sovereign (~7.7%)</th>
+                    <th className="py-3 px-4 text-emerald-400">Extra Yield Earned</th>
+                    <th className="py-3 px-4 text-red-400">Inaction Tax Loss</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 bg-white font-medium">
+                  {yearlyData.map((row) => (
+                    <tr key={row.year} className="hover:bg-slate-50 transition">
+                      <td className="py-3 px-4 font-bold text-slate-900">Year {row.year}</td>
+                      <td className="py-3 px-4 text-slate-700">{formatINR(row.invested)}</td>
+                      <td className="py-3 px-4 text-slate-600">{formatINR(row.bankPayout)}</td>
+                      <td className="py-3 px-4 font-bold text-emerald-700">{formatINR(row.sovereignPayout)}</td>
+                      <td className="py-3 px-4 font-bold text-emerald-600">+{formatINR(row.taxLoss)}</td>
+                      <td className="py-3 px-4 font-bold text-red-600">-{formatINR(row.taxLoss)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+      </main>
+
+      {/* ℹ️ SCHEME RULES MODAL [NEW FEATURE] */}
+      {selectedSchemeRules && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 relative">
+            <button 
+              onClick={() => setSelectedSchemeRules(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1"
+            >
+              ✕
+            </button>
+
+            <div className="flex items-center space-x-3 border-b border-slate-100 pb-3 mb-4">
+              <span className="text-3xl p-2 bg-emerald-50 rounded-xl border border-emerald-200">
+                {selectedSchemeRules.icon}
+              </span>
+              <div>
+                <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider block">
+                  Official Scheme Rules & Policy
+                </span>
+                <h3 className="font-heading font-bold text-xl text-slate-900 mt-0.5">
+                  {selectedSchemeRules.name}
+                </h3>
+              </div>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              
+              {/* 1. Deposit Limits */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-1">
+                <span className="font-bold text-slate-900 block flex items-center space-x-1">
+                  <span>💰 Deposit Limits (Min / Max per year)</span>
+                </span>
+                <p className="text-slate-700 font-medium leading-relaxed">
+                  {selectedSchemeRules.rules.limits}
+                </p>
+              </div>
+
+              {/* 2. Lock-in Period & Early Withdrawal */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-1">
+                <span className="font-bold text-slate-900 block flex items-center space-x-1">
+                  <span>🔒 Lock-in Horizon & Early Exit Rules</span>
+                </span>
+                <p className="text-slate-700 font-medium leading-relaxed">
+                  {selectedSchemeRules.rules.lockIn}
+                </p>
+                <div className="pt-1.5 text-[11px] text-amber-800 font-semibold bg-amber-50/80 p-2 rounded-lg border border-amber-200/60 mt-1">
+                  ⚡ <strong>Early Exit Penalty:</strong> {selectedSchemeRules.rules.earlyExit}
+                </div>
+              </div>
+
+              {/* 3. Tax Benefit Status */}
+              <div className="bg-emerald-50/80 p-3.5 rounded-xl border border-emerald-200 space-y-1">
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-emerald-900 block">🏷️ Tax Exemption & Category</span>
+                  <span className="font-extrabold text-xs px-2.5 py-0.5 bg-emerald-600 text-white rounded-md">
+                    {selectedSchemeRules.taxTag}
+                  </span>
+                </div>
+                <p className="text-emerald-800 font-medium leading-relaxed pt-1">
+                  {selectedSchemeRules.rules.taxStatus}
+                </p>
+              </div>
+
+              <button
+                onClick={() => setSelectedSchemeRules(null)}
+                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition"
+              >
+                Close Rules Sheet
+              </button>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🔊 LOCAL LANGUAGE AUDIO VOICE GUIDE MODAL */}
+      {audioModalScheme && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 relative">
+            <button 
+              onClick={handleCloseAudioModal}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1"
+            >
+              ✕
+            </button>
+
+            <div className="flex items-center space-x-3 border-b border-slate-100 pb-3 mb-4">
+              <span className="text-3xl p-2 bg-amber-50 rounded-xl border border-amber-200">
+                {audioModalScheme.icon}
+              </span>
+              <div>
+                <span className="text-xs font-bold text-amber-600 uppercase tracking-wider block flex items-center space-x-1">
+                  <span>🔊 Voice Explanation Guide</span>
+                </span>
+                <h3 className="font-heading font-bold text-xl text-slate-900 mt-0.5">
+                  {audioModalScheme.name}
+                </h3>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {/* Language Switcher Tabs */}
+              <div className="flex justify-between items-center bg-slate-100 p-1 rounded-xl border">
+                <span className="text-xs font-bold text-slate-600 pl-3">Select Voice Language:</span>
+                <div className="flex space-x-1">
+                  <button
+                    onClick={() => handleToggleAudioLang('hi')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition ${
+                      audioLang === 'hi'
+                        ? 'bg-amber-500 text-slate-950 shadow-xs'
+                        : 'text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    🇮🇳 हिंदी (Hindi)
+                  </button>
+                  <button
+                    onClick={() => handleToggleAudioLang('en')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition ${
+                      audioLang === 'en'
+                        ? 'bg-amber-500 text-slate-950 shadow-xs'
+                        : 'text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    🇬🇧 English
+                  </button>
+                </div>
+              </div>
+
+              {/* Animated Audio Equalizer Visualizer */}
+              <div className="bg-slate-900 text-white rounded-2xl p-4 border border-slate-800 flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <button 
+                    onClick={() => speakAudio(audioModalScheme.audioExplanation[audioLang], audioLang)}
+                    className="w-10 h-10 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center font-bold text-lg shadow-md transition"
+                  >
+                    {isPlayingAudio ? '⏸' : '▶'}
+                  </button>
+                  <div>
+                    <span className="text-xs font-bold text-amber-400 block">
+                      {isPlayingAudio ? 'Speaking now...' : 'Click play to listen'}
+                    </span>
+                    <span className="text-[11px] text-slate-400">Simple local language terms</span>
+                  </div>
+                </div>
+
+                {/* Animated Bars */}
+                <div className="flex items-end space-x-1 h-6">
+                  <div className={`w-1 bg-amber-400 rounded-full ${isPlayingAudio ? 'animate-bounce' : 'h-2'}`} style={{ animationDuration: '0.6s' }}></div>
+                  <div className={`w-1 bg-amber-400 rounded-full ${isPlayingAudio ? 'animate-bounce' : 'h-4'}`} style={{ animationDuration: '0.4s' }}></div>
+                  <div className={`w-1 bg-amber-400 rounded-full ${isPlayingAudio ? 'animate-bounce' : 'h-3'}`} style={{ animationDuration: '0.8s' }}></div>
+                  <div className={`w-1 bg-amber-400 rounded-full ${isPlayingAudio ? 'animate-bounce' : 'h-5'}`} style={{ animationDuration: '0.5s' }}></div>
+                </div>
+              </div>
+
+              {/* Audio Script Transcript Text Box */}
+              <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-4">
+                <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block mb-1">
+                  Audio Explanation Transcript:
+                </span>
+                <p className="text-xs text-slate-800 leading-relaxed font-medium">
+                  "{audioModalScheme.audioExplanation[audioLang]}"
+                </p>
+              </div>
+
+              <button
+                onClick={handleCloseAudioModal}
+                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition"
+              >
+                Done Listening
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🪪 VISUAL ONBOARDING & PHOTO DOCUMENT CHECKLIST MODAL */}
+      {selectedSchemeDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 relative max-h-[90vh] overflow-y-auto">
+            <button 
+              onClick={() => setSelectedSchemeDoc(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1"
+            >
+              ✕
+            </button>
+
+            {/* Header */}
+            <div className="border-b border-slate-100 pb-3 mb-4">
+              <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider block flex items-center space-x-1">
+                <span>🪪 Visual Document & Branch Visit Guide</span>
+              </span>
+              <h3 className="font-heading font-bold text-xl text-slate-900 mt-0.5 flex items-center space-x-2">
+                <span>{selectedSchemeDoc.icon}</span>
+                <span>{selectedSchemeDoc.name}</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Physical document photo badges & step-by-step Post Office / Bank branch visit guide
+              </p>
+            </div>
+
+            <div className="space-y-5">
+              
+              {/* Overview Pill */}
+              <div className="bg-emerald-50/80 border border-emerald-200 rounded-xl p-3.5 flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-slate-500 block">Interest Rate</span>
+                  <span className="font-extrabold text-emerald-800 text-sm">{selectedSchemeDoc.rateRange || `${selectedSchemeDoc.rate}% p.a.`}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Lock-in Period</span>
+                  <span className="font-bold text-slate-800">{selectedSchemeDoc.tenure}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Tax Category</span>
+                  <span className="font-bold text-amber-700">{selectedSchemeDoc.taxTag}</span>
+                </div>
+              </div>
+
+              {/* VISUAL DOCUMENT BADGES GRID */}
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Required Document Photo Badges ({selectedSchemeDoc.documents.filter(d => checkedDocs[d.id]).length} / {selectedSchemeDoc.documents.length} Ready)
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {selectedSchemeDoc.documents.map((doc) => (
+                    <div 
+                      key={doc.id}
+                      onClick={() => toggleDocCheck(doc.id)}
+                      className={`p-3 rounded-xl border transition cursor-pointer flex items-start space-x-3 ${
+                        checkedDocs[doc.id]
+                          ? 'bg-emerald-50 border-emerald-400 text-emerald-950 ring-2 ring-emerald-500/20'
+                          : 'bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!checkedDocs[doc.id]}
+                        onChange={() => {}}
+                        className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <div>
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-lg">{doc.icon}</span>
+                          <span className="text-xs font-bold text-slate-900">{doc.name}</span>
+                        </div>
+                        <span className="text-[11px] text-slate-500 block mt-0.5">{doc.req}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Special Goal Warning Alerts */}
+              {selectedSchemeDoc.id === 'ssy' && (
+                <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 font-medium flex items-center space-x-3">
+                  <span className="text-2xl">👧</span>
+                  <div>
+                    <strong>Mandatory SSY Requirement:</strong> Girl child birth certificate copy is required. Girl child must be under 10 years old at account opening.
+                  </div>
+                </div>
+              )}
+
+              {selectedSchemeDoc.id === 'scss' && (
+                <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 font-medium flex items-center space-x-3">
+                  <span className="text-2xl">👵</span>
+                  <div>
+                    <strong>Senior Pension Requirement:</strong> Age proof document (60+ yrs) or VRS order (55-60 yrs) is required for quarterly pension crediting.
+                  </div>
+                </div>
+              )}
+
+              {/* STEP-BY-STEP BRANCH VISIT GUIDE */}
+              <div className="bg-slate-900 text-white rounded-xl p-4 space-y-3">
+                <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider block border-b border-slate-800 pb-2">
+                  🏢 Step-by-Step Branch Visit Guide:
+                </span>
+                <div className="space-y-2.5 text-xs text-slate-300">
+                  <div className="flex items-start space-x-2.5">
+                    <span className="w-5 h-5 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">1</span>
+                    <span><strong>Prepare Documents:</strong> Carry original & self-attested photocopies of Aadhaar, PAN & Photographs.</span>
+                  </div>
+                  <div className="flex items-start space-x-2.5">
+                    <span className="w-5 h-5 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">2</span>
+                    <span><strong>Visit Nearest Branch:</strong> Walk into any India Post Office branch or designated public bank.</span>
+                  </div>
+                  <div className="flex items-start space-x-2.5">
+                    <span className="w-5 h-5 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">3</span>
+                    <span><strong>Submit Form & Deposit:</strong> Fill Account Opening Form (Form 1 / Form A) & deposit initial amount via Cash/Cheque.</span>
+                  </div>
+                  <div className="flex items-start space-x-2.5">
+                    <span className="w-5 h-5 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">4</span>
+                    <span><strong>Collect Passbook:</strong> Receive your physical Scheme Passbook or Certificate on the spot.</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-1 flex space-x-3">
+                <button
+                  onClick={() => setSelectedSchemeDoc(null)}
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-md shadow-emerald-900/20"
+                >
+                  Confirm & Save Checklist
+                </button>
+                <button
+                  onClick={() => setSelectedSchemeDoc(null)}
+                  className="py-2.5 px-4 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs rounded-xl transition"
+                >
+                  Close
+                </button>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SMART RECOMMENDATION WIZARD MODAL */}
+      {showWizardModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 relative">
+            <button 
+              onClick={() => setShowWizardModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1"
+            >
+              ✕
+            </button>
+
+            <div className="flex items-center space-x-2 text-emerald-600 mb-4">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <h3 className="font-heading font-bold text-lg text-slate-900">Yield Optimization Assistant</h3>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  1. What is your primary liquidity need?
+                </label>
+                <select
+                  value={wizardAnswers.lockIn}
+                  onChange={(e) => setWizardAnswers({...wizardAnswers, lockIn: e.target.value})}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold"
+                >
+                  <option value="flexible">I need micro-investments / high liquidity (Access anytime)</option>
+                  <option value="monthly">I want regular monthly income</option>
+                  <option value="family">I am saving for Girl Child or Retirement</option>
+                  <option value="locked">I can lock in money for 5 years for max returns</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  2. What is your Income Tax Bracket?
+                </label>
+                <select
+                  value={wizardAnswers.taxBracket}
+                  onChange={(e) => setWizardAnswers({...wizardAnswers, taxBracket: e.target.value})}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold"
+                >
+                  <option value="0">Below ₹7 Lakhs (0% / Nil Tax)</option>
+                  <option value="20">20% Tax Bracket</option>
+                  <option value="30">30% High Tax Bracket</option>
+                </select>
+              </div>
+
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
+                <span className="text-xs font-extrabold text-emerald-900 block">Recommended Allocation Strategy:</span>
+                
+                {wizardAnswers.lockIn === 'locked' && (
+                  <p className="text-xs text-emerald-800">
+                    💡 <strong>100% NSC / 5-Yr POTD / KVP:</strong> Maximum safe sovereign yield (7.7%) + Section 80C tax deductions or money doubling.
+                  </p>
+                )}
+
+                {wizardAnswers.lockIn === 'family' && (
+                  <p className="text-xs text-emerald-800">
+                    💡 <strong>Sukanya Samriddhi (8.2% EEE) or SCSS (8.2%):</strong> Highest 100% tax-free returns for daughter's education or quarterly senior pension.
+                  </p>
+                )}
+
+                {wizardAnswers.lockIn === 'monthly' && (
+                  <p className="text-xs text-emerald-800">
+                    💡 <strong>Senior Citizen Scheme / POMIS:</strong> Earn 8.2% p.a. with direct quarterly or monthly payouts to your bank account.
+                  </p>
+                )}
+
+                {wizardAnswers.lockIn === 'flexible' && (
+                  <p className="text-xs text-emerald-800">
+                    💡 <strong>Micro-SIP (Index Fund) starting at ₹50/mo:</strong> ~11% expected market yield with total liquidity.
+                  </p>
+                )}
+              </div>
+
+              <button
+                onClick={() => setShowWizardModal(false)}
+                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition"
+              >
+                Apply to My Navigator
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EXPORT REPORT SUMMARY MODAL */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 relative">
+            <button 
+              onClick={() => setShowExportModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1"
+            >
+              ✕
+            </button>
+
+            <div className="border-b border-slate-200 pb-4 mb-4">
+              <div className="flex items-center space-x-2">
+                <span className="font-heading font-extrabold text-xl text-slate-900">Yield Bridge Summary Report</span>
+              </div>
+              <p className="text-xs text-slate-500">Generated for Sovereign & Safe Yield Optimization</p>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-700">
+              <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-lg">
+                <div><strong>Initial Deposit:</strong> {formatINR(initialSavings)}</div>
+                <div><strong>Monthly SIP:</strong> {formatINR(monthlyContribution)}</div>
+                <div><strong>Horizon:</strong> {timeHorizon} Years</div>
+                <div><strong>Bank Rate:</strong> {bankRate}%</div>
+              </div>
+
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex justify-between">
+                <div>
+                  <span className="text-emerald-900 font-bold block">Optimized Sovereign Payout</span>
+                  <span className="text-emerald-700 font-extrabold text-base">{formatINR(sovereignResult.totalPayout)}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-red-600 font-bold block">Inaction Tax Saved</span>
+                  <span className="text-red-600 font-extrabold text-base">+{formatINR(inactionTax)}</span>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-500 italic">
+                * Projections are computed based on compound interest formula assuming Q2 2026 small savings interest rates.
+              </p>
+
+              <div className="flex space-x-3 pt-2">
+                <button
+                  onClick={() => window.print()}
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition"
+                >
+                  🖨️ Print / Save as PDF
+                </button>
+                <button
+                  onClick={() => setShowExportModal(false)}
+                  className="py-2.5 px-4 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs rounded-xl transition"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FOOTER */}
+      <footer className="mt-16 border-t border-slate-200 bg-white py-8 px-4 text-center text-xs text-slate-500">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
+          <div className="flex items-center space-x-2">
+            <span className="font-heading font-bold text-slate-800">Yield Bridge</span>
+            <span>— Sovereign Yield Navigator</span>
+          </div>
+          <p>© 2026 Yield Bridge. Built for smart, safe Indian investors.</p>
+        </div>
+      </footer>
+
+    </div>
+  );
+}
+
+// Render React App
+const rootElement = document.getElementById('root');
+ReactDOM.createRoot(rootElement).render(<YieldBridgeApp />);
